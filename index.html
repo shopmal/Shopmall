@@ -6,7 +6,7 @@
     <title>ShopMall - Ganhe avaliando produtos</title>
     <!-- Firebase SDKs -->
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-database-compat.js"></script>
     <style>
         * {
             margin: 0;
@@ -348,17 +348,15 @@
 </div>
 <div class="container" id="app"><div class="spinner"> Carregando dados da nuvem...</div></div>
 <script>
-    // ---------- CONFIGURAÇÃO FIREBASE (suas credenciais) ----------
+    // ---------- CONFIGURAÇÃO FIREBASE REALTIME DATABASE ----------
     const firebaseConfig = {
         apiKey: "AIzaSyDV10JNJNCz7AwEQ12Ji4ASa67i18iRUfg",
         authDomain: "total-sistemas-a2b2f.firebaseapp.com",
         databaseURL: "https://total-sistemas-a2b2f-default-rtdb.firebaseio.com",
-        projectId: "total-sistemas-a2b2f",
-        storageBucket: "total-sistemas-a2b2f.firebasestorage.app"
     };
-    // Inicializar Firebase
     firebase.initializeApp(firebaseConfig);
-    const db = firebase.firestore();
+    const db = firebase.database();
+    const usersRef = db.ref('users');
     
     const ADMIN_EMAIL = "admin";
     const ADMIN_SENHA = "220808";
@@ -368,22 +366,54 @@
     function getLoggedUserEmail() { return sessionStorage.getItem(STORAGE_SESSION); }
     function setLoggedUserEmail(email) { email ? sessionStorage.setItem(STORAGE_SESSION, email) : sessionStorage.removeItem(STORAGE_SESSION); }
     
-    async function findUserByEmail(email) { if (!email) return null; const doc = await db.collection('users').doc(email).get(); return doc.exists ? doc.data() : null; }
+    // Helper functions para Realtime Database
+    async function findUserByEmail(email) {
+        if (!email) return null;
+        const snapshot = await usersRef.child(email).once('value');
+        return snapshot.exists() ? snapshot.val() : null;
+    }
+    
     async function findUserByEmailOrPhone(identifier) {
         const norm = identifier.trim().toLowerCase();
+        // Primeiro tenta por email
         let user = await findUserByEmail(norm);
         if (user) return user;
-        const snap = await db.collection('users').where('telefone', '==', identifier.trim()).get();
-        return snap.empty ? null : snap.docs[0].data();
+        // Depois por telefone (precisa de consulta em toda coleção)
+        const snapshot = await usersRef.once('value');
+        const users = snapshot.val();
+        if (users) {
+            for (let key in users) {
+                if (users[key].telefone === identifier.trim()) {
+                    return users[key];
+                }
+            }
+        }
+        return null;
     }
-    async function updateUser(user) { await db.collection('users').doc(user.email).set(user, { merge: true }); return user; }
-    async function codigoJaUsado(codigo) { const snap = await db.collection('users').where('codigoUsado', '==', codigo).get(); return !snap.empty; }
+    
+    async function updateUser(user) {
+        await usersRef.child(user.email).set(user);
+        return user;
+    }
+    
+    async function codigoJaUsado(codigo) {
+        const snapshot = await usersRef.once('value');
+        const users = snapshot.val();
+        if (users) {
+            for (let key in users) {
+                if (users[key].codigoUsado === codigo) return true;
+            }
+        }
+        return false;
+    }
+    
     function gerarCodigoConvite(email) {
         const base = email.split('@')[0].toUpperCase().replace(/[^A-Z0-9]/g, '');
         const random = Math.floor(Math.random() * 9000) + 1000;
         return (base + random).slice(0, 10);
     }
-    // VIP
+    
+    // VIP progressivo
     function calcularNivelVIP(totalDep) { if (totalDep>=640) return 10; if (totalDep>=530) return 9; if (totalDep>=430) return 8; if (totalDep>=340) return 7; if (totalDep>=260) return 6; if (totalDep>=190) return 5; if (totalDep>=130) return 4; if (totalDep>=80) return 3; if (totalDep>=40) return 2; return 1; }
     function getMultiplicadorVIP(vip) { return 1 + (vip-1)*0.5; }
     function getGanhoPorAvaliacao(vip, valorBase) { let g = valorBase * getMultiplicadorVIP(vip); if (g>50) g=50; return parseFloat(g.toFixed(2)); }
@@ -399,16 +429,25 @@
         }
         return user;
     }
+    
     function validarSenha(s) { return /^\d{6}$/.test(s); }
     function validarCPF(c) { if (!c) return true; return c.replace(/\D/g,'').length === 11; }
+    
     async function registerUser(nome, sobrenome, telefone, email, senha, cpf = "", codigoConvite = "") {
         const normEmail = email.trim().toLowerCase();
         if (await findUserByEmail(normEmail)) throw new Error("E-mail já existe");
         if (!telefone.trim()) throw new Error("Telefone obrigatório");
-        const phoneSnap = await db.collection('users').where('telefone', '==', telefone.trim()).get();
-        if (!phoneSnap.empty) throw new Error("Telefone já cadastrado");
+        // Verificar telefone duplicado
+        const snapshot = await usersRef.once('value');
+        const users = snapshot.val();
+        if (users) {
+            for (let key in users) {
+                if (users[key].telefone === telefone.trim()) throw new Error("Telefone já cadastrado");
+            }
+        }
         if (!validarSenha(senha)) throw new Error("Senha deve ter 6 dígitos numéricos");
         if (cpf && !validarCPF(cpf)) throw new Error("CPF deve ter 11 dígitos");
+        
         const codigo = gerarCodigoConvite(normEmail);
         const novo = {
             nome, sobrenome, nomeCompleto: `${nome} ${sobrenome}`, telefone: telefone.trim(), cpf: cpf||null,
@@ -419,9 +458,17 @@
         };
         let bonusAplicado = false;
         if (codigoConvite && codigoConvite.trim()) {
-            const snap = await db.collection('users').where('codigoConvite', '==', codigoConvite.trim()).get();
-            if (!snap.empty && !(await codigoJaUsado(codigoConvite.trim()))) {
-                const indicador = snap.docs[0].data();
+            // Buscar usuário que possui esse código
+            let indicador = null;
+            if (users) {
+                for (let key in users) {
+                    if (users[key].codigoConvite === codigoConvite.trim()) {
+                        indicador = users[key];
+                        break;
+                    }
+                }
+            }
+            if (indicador && !(await codigoJaUsado(codigoConvite.trim()))) {
                 bonusAplicado = true;
                 novo.saldo += 10;
                 novo.codigoUsado = codigoConvite.trim();
@@ -430,9 +477,10 @@
                 await updateUser(indicador);
             }
         }
-        await db.collection('users').doc(normEmail).set(novo);
+        await usersRef.child(normEmail).set(novo);
         return { user: novo, bonusAplicado };
     }
+    
     async function loginUser(identifier, senha) {
         if (identifier.trim().toLowerCase() === ADMIN_EMAIL && senha === ADMIN_SENHA) {
             sessionStorage.setItem("admin_logged", "true");
@@ -445,8 +493,10 @@
         sessionStorage.removeItem("admin_logged");
         return { isAdmin: false, user: await resetDailyIfNeeded(user) };
     }
+    
     function isAdminLogged() { return sessionStorage.getItem("admin_logged") === "true"; }
     function adminLogout() { sessionStorage.removeItem("admin_logged"); }
+    
     // Produtos
     function obterImagemPorNome(nome) {
         const map = { "Camiseta":"t-shirt", "Fone Bluetooth":"headphone", "Power Bank":"power-bank", "Relógio":"watch", "Mochila":"backpack", "Mouse":"mouse", "Teclado":"keyboard", "Capa Celular":"phone-case", "Película":"screen-protector", "Garrafa":"water-bottle" };
@@ -463,6 +513,7 @@
         }));
     }
     let produtosAtuais = gerarProdutos();
+    
     async function avaliarProduto(user, produtoId, valorBase) {
         let u = await resetDailyIfNeeded(user);
         const limite = getLimiteDiario(u.vipLevel);
@@ -475,6 +526,7 @@
         await updateUser(u);
         return u;
     }
+    
     async function solicitarSaque(user, valor, chavePix) {
         if (valor < 30) throw new Error("Valor mínimo R$30");
         if (valor > user.saldo) throw new Error("Saldo insuficiente");
@@ -489,12 +541,64 @@
         await updateUser(user);
         return user;
     }
-    async function autorizarSaque(userEmail, index) { const u = await findUserByEmail(userEmail); if (u && u.historicoSaques[index]?.status==="Sacando") { u.historicoSaques[index].status="Sucesso"; await updateUser(u); } }
-    async function recusarSaque(userEmail, index) { const u = await findUserByEmail(userEmail); const s = u?.historicoSaques[index]; if (s?.status==="Sacando") { u.saldo += s.valor; s.status="Recusado"; await updateUser(u); } }
-    async function solicitarDeposito(user, valor) { if (valor<=0) throw new Error("Valor inválido"); user.historicoDepositos.unshift({ valor, data: new Date().toLocaleDateString('pt-BR'), hora: new Date().toLocaleTimeString('pt-BR'), metodo:"Pix", status:"pendente" }); await updateUser(user); return user; }
-    async function aprovarDeposito(userEmail, idx) { const u = await findUserByEmail(userEmail); const d = u?.historicoDepositos[idx]; if (d?.status==="pendente") { d.status="aprovado"; u.saldo += d.valor; u.totalDepositadoAprovado = (u.totalDepositadoAprovado||0)+d.valor; await updateUser(u); await atualizarVIPporDepositosAprovados(u); } }
-    async function rejeitarDeposito(userEmail, idx) { const u = await findUserByEmail(userEmail); const d = u?.historicoDepositos[idx]; if (d?.status==="pendente") { d.status="rejeitado"; await updateUser(u); } }
-    function imprimirComprovante(s) { const html = `<!DOCTYPE html><html><head><title>Comprovante</title><style>body{font-family:Arial;padding:40px}.container{max-width:600px;margin:0 auto;border:1px solid #ccc;padding:20px;border-radius:16px}h2{color:#ee4d2d}</style></head><body><div class='container'><h2> ShopMall - Comprovante de Saque</h2><p><strong>Nome:</strong> ${s.nome}</p><p><strong>Data:</strong> ${s.data} ${s.hora}</p><p><strong>Valor:</strong> R$ ${s.valor.toFixed(2)}</p><p><strong>Código:</strong> ${s.codigoRegistro}</p><p><strong>Autenticação:</strong> ${s.numAutenticacao}</p><p><strong>Chave Pix:</strong> ${s.chaveUsada}</p><p><strong>Status:</strong> ${s.status}</p></div></body></html>`; const w=window.open(); w.document.write(html); w.document.close(); w.print(); }
+    
+    async function autorizarSaque(userEmail, index) { 
+        const u = await findUserByEmail(userEmail); 
+        if (u && u.historicoSaques[index]?.status === "Sacando") { 
+            u.historicoSaques[index].status = "Sucesso"; 
+            await updateUser(u); 
+        } 
+    }
+    
+    async function recusarSaque(userEmail, index) { 
+        const u = await findUserByEmail(userEmail); 
+        const s = u?.historicoSaques[index]; 
+        if (s?.status === "Sacando") { 
+            u.saldo += s.valor; 
+            s.status = "Recusado"; 
+            await updateUser(u); 
+        } 
+    }
+    
+    async function solicitarDeposito(user, valor) { 
+        if (valor<=0) throw new Error("Valor inválido"); 
+        user.historicoDepositos.unshift({ 
+            valor, data: new Date().toLocaleDateString('pt-BR'), 
+            hora: new Date().toLocaleTimeString('pt-BR'), metodo:"Pix", status:"pendente" 
+        }); 
+        await updateUser(user); 
+        return user; 
+    }
+    
+    async function aprovarDeposito(userEmail, idx) { 
+        const u = await findUserByEmail(userEmail); 
+        const d = u?.historicoDepositos[idx]; 
+        if (d?.status === "pendente") { 
+            d.status = "aprovado"; 
+            u.saldo += d.valor; 
+            u.totalDepositadoAprovado = (u.totalDepositadoAprovado||0) + d.valor; 
+            await updateUser(u); 
+            await atualizarVIPporDepositosAprovados(u); 
+        } 
+    }
+    
+    async function rejeitarDeposito(userEmail, idx) { 
+        const u = await findUserByEmail(userEmail); 
+        const d = u?.historicoDepositos[idx]; 
+        if (d?.status === "pendente") { 
+            d.status = "rejeitado"; 
+            await updateUser(u); 
+        } 
+    }
+    
+    function imprimirComprovante(s) { 
+        const html = `<!DOCTYPE html><html><head><title>Comprovante</title><style>body{font-family:Arial;padding:40px}.container{max-width:600px;margin:0 auto;border:1px solid #ccc;padding:20px;border-radius:16px}h2{color:#ee4d2d}</style></head><body><div class='container'><h2> ShopMall - Comprovante de Saque</h2><p><strong>Nome:</strong> ${s.nome}</p><p><strong>Data:</strong> ${s.data} ${s.hora}</p><p><strong>Valor:</strong> R$ ${s.valor.toFixed(2)}</p><p><strong>Código:</strong> ${s.codigoRegistro}</p><p><strong>Autenticação:</strong> ${s.numAutenticacao}</p><p><strong>Chave Pix:</strong> ${s.chaveUsada}</p><p><strong>Status:</strong> ${s.status}</p></div></body></html>`; 
+        const w = window.open(); 
+        w.document.write(html); 
+        w.document.close(); 
+        w.print(); 
+    }
+    
     // Simulação de cotações
     let cotacoes = { "Dólar (USD)": 5.23, "Bitcoin (BTC)": 320000, "Euro (EUR)": 5.68, "Ethereum (ETH)": 11000, "IPCA (Mensal)": 0.42 };
     let cotacoesInterval = null;
@@ -518,6 +622,7 @@
     }
     function iniciarSimulacaoCotacoes() { if (cotacoesInterval) clearInterval(cotacoesInterval); atualizarCotacoes(); cotacoesInterval = setInterval(atualizarCotacoes, 5000); }
     function pararSimulacaoCotacoes() { if (cotacoesInterval) { clearInterval(cotacoesInterval); cotacoesInterval = null; } }
+    
     // Simulação saques ao vivo
     const nomesFict = ["Ana Silva","Carlos Oliveira","Mariana Souza","João Pereira","Fernanda Lima","Rafael Alves","Beatriz Costa","Lucas Rodrigues","Juliana Santos","Thiago Martins","Camila Rocha","Diego Nunes","Patrícia Gomes","Bruno Teixeira","Larissa Mendes"];
     let liveInterval = null, liveNotif = [];
@@ -528,31 +633,37 @@
     function pararLive() { if (liveInterval) { clearInterval(liveInterval); liveInterval=null; } }
     function renderLive() { return `<div class="live-saques"><div class="live-title"><span class="pulse"></span>  SAQUES AO VIVO AGORA</div><div class="live-list-container"><div id="liveSaquesList" class="live-list"></div></div></div>`; }
     function renderCotacoes() { return `<div class="cotacao-container" id="cotacoesContainer"></div>`; }
+    
     // UI
-    let currentUser=null, isAdmin=false, currentView="login", drawerOpen=false;
+    let currentUser = null, isAdmin = false, currentView = "login", drawerOpen = false;
     const app = document.getElementById("app"), drawer = document.getElementById("sideDrawer"), overlay = document.getElementById("drawerOverlay"), hamburger = document.getElementById("hamburgerBtn");
     function closeDrawer() { drawer.classList.remove("open"); overlay.classList.remove("active"); drawerOpen=false; }
     function openDrawer() { drawer.classList.add("open"); overlay.classList.add("active"); drawerOpen=true; }
     hamburger.onclick = () => drawerOpen ? closeDrawer() : openDrawer();
     overlay.onclick = closeDrawer;
+    
     function renderLogin() { return `<div class="auth-container"><div class="card"><h1 style="text-align:center"> ShopMall</h1><div class="motivacional"><h3> Ganhe dinheiro avaliando produtos! </h3><p> Até R$50 por avaliação! <br> Indique amigos e ganhe R$5 por indicação!<br> Seja VIP e multiplique seus ganhos!<br> Saques a partir de R$30! </p></div><h2>Login</h2><div class="form-group"><label>E-mail ou Telefone</label><input id="loginIdentifier" placeholder="exemplo@email.com ou (11)99999-9999"></div><div class="form-group"><label>Senha (6 dígitos)</label><input type="password" id="loginSenha" maxlength="6"></div><button id="loginBtn">Entrar</button><div class="flex-btns"><button id="goRegisterBtn" class="secondary">Criar conta</button></div><div id="loginError" style="color:red;margin-top:10px"></div></div></div>`; }
+    
     function renderRegister() { const ref = new URLSearchParams(window.location.search).get('ref')||''; return `<div class="auth-container"><div class="card"><h2> Criar conta</h2><div class="form-group"><label>Nome</label><input id="regNome"></div><div class="form-group"><label>Sobrenome</label><input id="regSobrenome"></div><div class="form-group"><label>Telefone (obrigatório)</label><input id="regTelefone" placeholder="(11) 99999-9999"></div><div class="form-group"><label>E-mail</label><input id="regEmail"></div><div class="form-group"><label>Senha (6 dígitos numéricos)</label><input type="password" id="regSenha" maxlength="6"></div><div class="form-group"><label>CPF (opcional, 11 dígitos)</label><input id="regCpf" placeholder="Somente números"></div><div class="form-group"><label>Código de convite (opcional)</label><input id="regCodigoConvite" value="${ref}"></div><button id="regSubmitBtn">Cadastrar e ganhar R$10 de bônus!</button><button id="backLoginBtn" class="secondary">Voltar</button><div id="regError" style="color:red"></div></div></div>`; }
+    
     function renderDashboard() {
         if(!currentUser) return "";
         const u = currentUser, limite = getLimiteDiario(u.vipLevel), pode = u.avaliacoesHoje < limite, mult = getMultiplicadorVIP(u.vipLevel);
         let prodHtml = "";
         produtosAtuais.forEach(p => { const av = u.produtosAvaliadosHoje[p.id]; const ganho = getGanhoPorAvaliacao(u.vipLevel, p.valorBase); prodHtml += `<div class="produto-card"><img src="${p.imagem}" onerror="this.src='https://via.placeholder.com/100x100?text=Produto'"><div class="produto-nome">${p.nome}</div><div class="produto-preco">Base: R$ ${p.valorBase.toFixed(2)}</div><button class="btn-avaliar" data-id="${p.id}" data-base="${p.valorBase}" ${!pode || av ? 'disabled' : ''}>${av ? ' Avaliado' : ` Ganhe R$ ${ganho.toFixed(2)}`}</button></div>`; });
-        let extrato = `<table><thead><tr><th>Nome</th><th>Data/Hora</th><th>Valor</th><th>Código</th><th>Status</th><th>Ação</th></tr></thead><tbody>`;
-        u.historicoSaques.forEach((s,idx) => { let cls = s.status==="Sucesso"?"status-sucesso":(s.status==="Recusado"?"status-recusado":"status-sacando"); let btn = s.status==="Sucesso"?`<button class="btn-imprimir" data-idx="${idx}"> Imprimir</button>`:""; extrato += `<tr><td>${s.nome}</td><td>${s.data} ${s.hora}</td>.htmlR$ ${s.valor.toFixed(2)}</td><td>${s.codigoRegistro}</td><td><span class="${cls}">${s.status}</span></td><td>${btn}</td></tr>`; });
+        let extrato = `<tr><thead><tr><th>Nome</th><th>Data/Hora</th><th>Valor</th><th>Código</th><th>Status</th><th>Ação</th></tr></thead><tbody>`;
+        u.historicoSaques.forEach((s,idx) => { let cls = s.status==="Sucesso"?"status-sucesso":(s.status==="Recusado"?"status-recusado":"status-sacando"); let btn = s.status==="Sucesso"?`<button class="btn-imprimir" data-idx="${idx}"> Imprimir</button>`:""; extrato += `<tr><td>${s.nome}</td><td>${s.data} ${s.hora}</td><td>R$ ${s.valor.toFixed(2)}</td><td>${s.codigoRegistro}</td><td><span class="${cls}">${s.status}</span></td><td>${btn}</td></tr>`; });
         if(u.historicoSaques.length===0) extrato += `<tr><td colspan="6">Nenhum saque</td></tr>`;
         extrato += `</tbody></table>`;
         let depositosHtml = `<div class="card"><h3> Histórico de Depósitos</h3>${u.historicoDepositos.length===0?'<p>Nenhum depósito</p>':`<table><thead><tr><th>Valor</th><th>Data</th><th>Status</th></tr></thead><tbody>${u.historicoDepositos.map(d=>`<tr><td>R$ ${d.valor.toFixed(2)}</td><td>${d.data} ${d.hora}</td><td>${d.status==="pendente"?" Pendente (aprov. admin)":(d.status==="aprovado"?" Aprovado":" Rejeitado")}</td></tr>`).join('')}</tbody></table>`}</div>`;
         const conviteHtml = `<div class="convite-box"><div><strong> Seu código:</strong> <span class="convite-codigo" id="meuCodigoConvite">${u.codigoConvite}</span></div><button id="copiarCodigoBtn" class="btn-copiar"> Copiar</button></div><div class="convite-box" style="background:#e3f2fd;"><div><strong> Link de convite:</strong> <span id="linkConvite" style="font-size:0.8rem; word-break:break-all;">${window.location.origin}${window.location.pathname}?ref=${u.codigoConvite}</span></div><button id="copiarLinkBtn" class="btn-copiar"> Copiar link</button></div>`;
         return `${renderLive()}${renderCotacoes()}${conviteHtml}<div class="card saldo-area"><div><strong> Meu Saldo</strong><div class="saldo-valor">R$ ${u.saldo.toFixed(2)}</div><div class="vip-badge">VIP ${u.vipLevel} • Multiplicador ×${mult.toFixed(1)}</div><div>Limite hoje: ${u.avaliacoesHoje}/${limite}</div><div>Próximo nível: ${u.vipLevel<10?`R$ ${[40,80,130,190,260,340,430,530,640][u.vipLevel-1]-(u.totalDepositadoAprovado||0)}`:"Máximo"}</div><div> Indicados: ${u.totalIndicados||0}</div></div><div style="display:flex; gap:12px;"><button id="btnSaque" style="background:#0f172a;"> Sacar</button><button id="btnDeposito" style="background:#2b9348;"> Depositar</button></div></div><div class="card"><h2> Produtos para avaliar</h2><div class="produtos-grid" id="produtosGrid">${prodHtml}</div></div>${depositosHtml}<div class="card"><h2> Extrato de Saques</h2>${extrato}</div>`;
     }
+    
     async function renderAdminPanel() {
-        const snap = await db.collection('users').get();
-        let users = []; snap.forEach(d=>{ if(d.id!==ADMIN_EMAIL) users.push(d.data()); });
+        const snapshot = await usersRef.once('value');
+        let users = [];
+        snapshot.forEach(child => { if(child.key !== ADMIN_EMAIL) users.push(child.val()); });
         let activeTab="usuarios", searchTerm="";
         const renderContent = () => {
             let filtered = users.filter(u=>u.email!==ADMIN_EMAIL);
@@ -595,6 +706,7 @@
         document.getElementById('adminLogout').onclick = () => { adminLogout(); fullRender(); };
         renderContent();
     }
+    
     let activeModal=null;
     function closeModal() { if(activeModal) activeModal.remove(); activeModal=null; }
     function showSaqueModal() {
@@ -613,10 +725,12 @@
         document.getElementById('solicitarDep').onclick = async () => { if(valorAtual===0){ document.getElementById('depError').innerText="Gere o QR Code primeiro"; return; } try { currentUser = await solicitarDeposito(currentUser, valorAtual); alert(" Solicitação enviada! O depósito pode levar até 24 horas para ser compensado. Aguarde aprovação do administrador."); closeModal(); fullRender(); } catch(e){ document.getElementById('depError').innerText=e.message; } };
         document.getElementById('cancelDep').onclick = closeModal;
     }
+    
     function showPerfil() { alert(` ${currentUser.nomeCompleto}\n ${currentUser.email}\n ${currentUser.telefone}\n VIP ${currentUser.vipLevel}\n Saldo: R$ ${currentUser.saldo.toFixed(2)}\n Código: ${currentUser.codigoConvite}\n Indicados: ${currentUser.totalIndicados||0}`); }
     function showStatusSaque() { let msg = "Status dos saques:\n"; currentUser.historicoSaques.forEach(s=>msg+=`${s.data} - R$ ${s.valor} - ${s.status}\n`); alert(msg||"Nenhum saque"); }
     function showConvite() { const link = `${window.location.origin}${window.location.pathname}?ref=${currentUser.codigoConvite}`; alert(` Código: ${currentUser.codigoConvite}\nLink: ${link}\nCompartilhe e ganhe R$5 por amigo!`); navigator.clipboard.writeText(link); }
     function showSuporte() { alert(" Suporte: (11) 99999-9999 | suporte@shopmall.com"); }
+    
     async function fullRender() {
         if(isAdminLogged()) { pararLive(); pararSimulacaoCotacoes(); await renderAdminPanel(); return; }
         const logged = getLoggedUserEmail();
@@ -625,6 +739,7 @@
         else { app.innerHTML = renderLogin(); attachAuthEvents(); pararLive(); pararSimulacaoCotacoes(); }
         closeDrawer();
     }
+    
     function attachDashboardEvents() {
         document.querySelectorAll('.btn-avaliar').forEach(btn=>btn.onclick=async()=>{ const id=parseInt(btn.dataset.id), base=parseFloat(btn.dataset.base); try { currentUser = await avaliarProduto(currentUser, id, base); fullRender(); } catch(e){ alert(e.message); } });
         document.getElementById('btnSaque')?.addEventListener('click', showSaqueModal);
