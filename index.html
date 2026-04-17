@@ -327,6 +327,19 @@
         .tab-btn { background: #e2e8f0; color: #1e293b; width: auto; padding: 8px 20px; }
         .tab-btn.active { background: var(--primary); color: white; }
         .spinner { text-align: center; padding: 20px; color: var(--primary); }
+        /* Logo de dinheiro */
+        .money-logo {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        .money-logo span {
+            font-size: 4rem;
+            display: inline-block;
+            background: linear-gradient(135deg, #ffd700, #ffb347);
+            border-radius: 50%;
+            padding: 15px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+        }
         @media (max-width: 640px) {
             .produtos-grid { grid-template-columns: repeat(2,1fr); }
             .saldo-area { flex-direction: column; align-items: stretch; }
@@ -358,6 +371,11 @@
     const db = firebase.database();
     const usersRef = db.ref('users');
     
+    // Função para sanitizar chaves (remover caracteres inválidos para Firebase)
+    function sanitizeKey(key) {
+        return key.replace(/[.#$[\]\/]/g, '_');
+    }
+    
     const ADMIN_EMAIL = "admin";
     const ADMIN_SENHA = "220808";
     const CHAVE_PIX_FIXA = "weliton7458@gmail.com";
@@ -366,19 +384,26 @@
     function getLoggedUserEmail() { return sessionStorage.getItem(STORAGE_SESSION); }
     function setLoggedUserEmail(email) { email ? sessionStorage.setItem(STORAGE_SESSION, email) : sessionStorage.removeItem(STORAGE_SESSION); }
     
-    // Helper functions para Realtime Database
+    // Buscar usuário por email (sanitizado)
     async function findUserByEmail(email) {
         if (!email) return null;
-        const snapshot = await usersRef.child(email).once('value');
-        return snapshot.exists() ? snapshot.val() : null;
+        const sanitized = sanitizeKey(email);
+        const snapshot = await usersRef.child(sanitized).once('value');
+        if (snapshot.exists()) {
+            const user = snapshot.val();
+            user.emailOriginal = email; // garantir
+            return user;
+        }
+        return null;
     }
     
+    // Buscar por email ou telefone (percorre todos, aceitável para pequena escala)
     async function findUserByEmailOrPhone(identifier) {
         const norm = identifier.trim().toLowerCase();
-        // Primeiro tenta por email
+        // Primeiro tenta por email sanitizado
         let user = await findUserByEmail(norm);
         if (user) return user;
-        // Depois por telefone (precisa de consulta em toda coleção)
+        // Depois por telefone (consulta em toda a coleção)
         const snapshot = await usersRef.once('value');
         const users = snapshot.val();
         if (users) {
@@ -392,7 +417,8 @@
     }
     
     async function updateUser(user) {
-        await usersRef.child(user.email).set(user);
+        const sanitizedEmail = sanitizeKey(user.email);
+        await usersRef.child(sanitizedEmail).set(user);
         return user;
     }
     
@@ -431,12 +457,20 @@
     }
     
     function validarSenha(s) { return /^\d{6}$/.test(s); }
-    function validarCPF(c) { if (!c) return true; return c.replace(/\D/g,'').length === 11; }
+    function validarCPF(c) { if (!c) return false; const digits = c.replace(/\D/g,''); return digits.length === 11; }
     
     async function registerUser(nome, sobrenome, telefone, email, senha, cpf = "", codigoConvite = "") {
         const normEmail = email.trim().toLowerCase();
-        if (await findUserByEmail(normEmail)) throw new Error("E-mail já existe");
-        if (!telefone.trim()) throw new Error("Telefone obrigatório");
+        if (!nome.trim()) throw new Error("Nome é obrigatório");
+        if (!sobrenome.trim()) throw new Error("Sobrenome é obrigatório");
+        if (!telefone.trim()) throw new Error("Telefone é obrigatório");
+        if (!validarCPF(cpf)) throw new Error("CPF inválido (deve conter 11 dígitos)");
+        if (!validarSenha(senha)) throw new Error("Senha deve ter 6 dígitos numéricos");
+        
+        // Verificar se e-mail já existe (pela chave sanitizada)
+        const existing = await findUserByEmail(normEmail);
+        if (existing) throw new Error("E-mail já existe");
+        
         // Verificar telefone duplicado
         const snapshot = await usersRef.once('value');
         const users = snapshot.val();
@@ -445,13 +479,11 @@
                 if (users[key].telefone === telefone.trim()) throw new Error("Telefone já cadastrado");
             }
         }
-        if (!validarSenha(senha)) throw new Error("Senha deve ter 6 dígitos numéricos");
-        if (cpf && !validarCPF(cpf)) throw new Error("CPF deve ter 11 dígitos");
         
         const codigo = gerarCodigoConvite(normEmail);
         const novo = {
-            nome, sobrenome, nomeCompleto: `${nome} ${sobrenome}`, telefone: telefone.trim(), cpf: cpf||null,
-            chavePixCadastro: "", email: normEmail, senha, saldo: 0, vipLevel: 1, totalDepositadoAprovado: 0,
+            nome, sobrenome, nomeCompleto: `${nome} ${sobrenome}`, telefone: telefone.trim(), cpf: cpf,
+            chavePixCadastro: "", email: normEmail, emailOriginal: normEmail, senha, saldo: 0, vipLevel: 1, totalDepositadoAprovado: 0,
             historicoDepositos: [], avaliacoesHoje: 0, produtosAvaliadosHoje: {},
             ultimaDataAvaliacao: new Date().toISOString().slice(0,10), historicoSaques: [],
             codigoConvite: codigo, codigoUsado: null, totalIndicados: 0
@@ -477,7 +509,8 @@
                 await updateUser(indicador);
             }
         }
-        await usersRef.child(normEmail).set(novo);
+        const sanitizedEmail = sanitizeKey(normEmail);
+        await usersRef.child(sanitizedEmail).set(novo);
         return { user: novo, bonusAplicado };
     }
     
@@ -642,20 +675,25 @@
     hamburger.onclick = () => drawerOpen ? closeDrawer() : openDrawer();
     overlay.onclick = closeDrawer;
     
-    function renderLogin() { return `<div class="auth-container"><div class="card"><h1 style="text-align:center"> ShopMall</h1><div class="motivacional"><h3> Ganhe dinheiro avaliando produtos! </h3><p> Até R$50 por avaliação! <br> Indique amigos e ganhe R$5 por indicação!<br> Seja VIP e multiplique seus ganhos!<br> Saques a partir de R$30! </p></div><h2>Login</h2><div class="form-group"><label>E-mail ou Telefone</label><input id="loginIdentifier" placeholder="exemplo@email.com ou (11)99999-9999"></div><div class="form-group"><label>Senha (6 dígitos)</label><input type="password" id="loginSenha" maxlength="6"></div><button id="loginBtn">Entrar</button><div class="flex-btns"><button id="goRegisterBtn" class="secondary">Criar conta</button></div><div id="loginError" style="color:red;margin-top:10px"></div></div></div>`; }
+    function renderLogin() { 
+        return `<div class="auth-container"><div class="card"><div class="money-logo"><span></span></div><h1 style="text-align:center"> ShopMall</h1><div class="motivacional"><h3> Ganhe dinheiro avaliando produtos! </h3><p> Até R$50 por avaliação! <br> Indique amigos e ganhe R$5 por indicação!<br> Seja VIP e multiplique seus ganhos!<br> Saques a partir de R$30! </p></div><h2>Login</h2><div class="form-group"><label>E-mail ou Telefone</label><input id="loginIdentifier" placeholder="exemplo@email.com ou (11)99999-9999"></div><div class="form-group"><label>Senha (6 dígitos)</label><input type="password" id="loginSenha" maxlength="6"></div><button id="loginBtn">Entrar</button><div class="flex-btns"><button id="goRegisterBtn" class="secondary">Criar conta</button></div><div id="loginError" style="color:red;margin-top:10px"></div></div></div>`; 
+    }
     
-    function renderRegister() { const ref = new URLSearchParams(window.location.search).get('ref')||''; return `<div class="auth-container"><div class="card"><h2> Criar conta</h2><div class="form-group"><label>Nome</label><input id="regNome"></div><div class="form-group"><label>Sobrenome</label><input id="regSobrenome"></div><div class="form-group"><label>Telefone (obrigatório)</label><input id="regTelefone" placeholder="(11) 99999-9999"></div><div class="form-group"><label>E-mail</label><input id="regEmail"></div><div class="form-group"><label>Senha (6 dígitos numéricos)</label><input type="password" id="regSenha" maxlength="6"></div><div class="form-group"><label>CPF (opcional, 11 dígitos)</label><input id="regCpf" placeholder="Somente números"></div><div class="form-group"><label>Código de convite (opcional)</label><input id="regCodigoConvite" value="${ref}"></div><button id="regSubmitBtn">Cadastrar e ganhar R$10 de bônus!</button><button id="backLoginBtn" class="secondary">Voltar</button><div id="regError" style="color:red"></div></div></div>`; }
+    function renderRegister() { 
+        const ref = new URLSearchParams(window.location.search).get('ref')||''; 
+        return `<div class="auth-container"><div class="card"><h2> Criar conta</h2><div class="form-group"><label>Nome *</label><input id="regNome"></div><div class="form-group"><label>Sobrenome *</label><input id="regSobrenome"></div><div class="form-group"><label>Telefone *</label><input id="regTelefone" placeholder="(11) 99999-9999"></div><div class="form-group"><label>E-mail *</label><input id="regEmail"></div><div class="form-group"><label>Senha (6 dígitos numéricos) *</label><input type="password" id="regSenha" maxlength="6"></div><div class="form-group"><label>CPF (11 dígitos) *</label><input id="regCpf" placeholder="Somente números"></div><div class="form-group"><label>Código de convite (opcional)</label><input id="regCodigoConvite" value="${ref}"></div><button id="regSubmitBtn">Cadastrar e ganhar R$10 de bônus!</button><button id="backLoginBtn" class="secondary">Voltar</button><div id="regError" style="color:red"></div></div></div>`; 
+    }
     
     function renderDashboard() {
         if(!currentUser) return "";
         const u = currentUser, limite = getLimiteDiario(u.vipLevel), pode = u.avaliacoesHoje < limite, mult = getMultiplicadorVIP(u.vipLevel);
         let prodHtml = "";
         produtosAtuais.forEach(p => { const av = u.produtosAvaliadosHoje[p.id]; const ganho = getGanhoPorAvaliacao(u.vipLevel, p.valorBase); prodHtml += `<div class="produto-card"><img src="${p.imagem}" onerror="this.src='https://via.placeholder.com/100x100?text=Produto'"><div class="produto-nome">${p.nome}</div><div class="produto-preco">Base: R$ ${p.valorBase.toFixed(2)}</div><button class="btn-avaliar" data-id="${p.id}" data-base="${p.valorBase}" ${!pode || av ? 'disabled' : ''}>${av ? ' Avaliado' : ` Ganhe R$ ${ganho.toFixed(2)}`}</button></div>`; });
-        let extrato = `<tr><thead><tr><th>Nome</th><th>Data/Hora</th><th>Valor</th><th>Código</th><th>Status</th><th>Ação</th></tr></thead><tbody>`;
+        let extrato = `<table><thead><tr><th>Nome</th><th>Data/Hora</th><th>Valor</th><th>Código</th><th>Status</th><th>Ação</th></tr></thead><tbody>`;
         u.historicoSaques.forEach((s,idx) => { let cls = s.status==="Sucesso"?"status-sucesso":(s.status==="Recusado"?"status-recusado":"status-sacando"); let btn = s.status==="Sucesso"?`<button class="btn-imprimir" data-idx="${idx}"> Imprimir</button>`:""; extrato += `<tr><td>${s.nome}</td><td>${s.data} ${s.hora}</td><td>R$ ${s.valor.toFixed(2)}</td><td>${s.codigoRegistro}</td><td><span class="${cls}">${s.status}</span></td><td>${btn}</td></tr>`; });
         if(u.historicoSaques.length===0) extrato += `<tr><td colspan="6">Nenhum saque</td></tr>`;
         extrato += `</tbody></table>`;
-        let depositosHtml = `<div class="card"><h3> Histórico de Depósitos</h3>${u.historicoDepositos.length===0?'<p>Nenhum depósito</p>':`<table><thead><tr><th>Valor</th><th>Data</th><th>Status</th></tr></thead><tbody>${u.historicoDepositos.map(d=>`<tr><td>R$ ${d.valor.toFixed(2)}</td><td>${d.data} ${d.hora}</td><td>${d.status==="pendente"?" Pendente (aprov. admin)":(d.status==="aprovado"?" Aprovado":" Rejeitado")}</td></tr>`).join('')}</tbody></table>`}</div>`;
+        let depositosHtml = `<div class="card"><h3> Histórico de Depósitos</h3>${u.historicoDepositos.length===0?'<p>Nenhum depósito</p>':`<table><thead><tr><th>Valor</th><th>Data</th><th>Status</th></tr></thead><tbody>${u.historicoDepositos.map(d=>`<tr><td>R$ ${d.valor.toFixed(2)}</td><td>${d.data} ${d.hora}</td><td>${d.status==="pendente"?" Pendente (aprov. admin)":(d.status==="aprovado"?" Aprovado":" Rejeitado")}</td></tr>`).join('')}</tbody></div>`}`;
         const conviteHtml = `<div class="convite-box"><div><strong> Seu código:</strong> <span class="convite-codigo" id="meuCodigoConvite">${u.codigoConvite}</span></div><button id="copiarCodigoBtn" class="btn-copiar"> Copiar</button></div><div class="convite-box" style="background:#e3f2fd;"><div><strong> Link de convite:</strong> <span id="linkConvite" style="font-size:0.8rem; word-break:break-all;">${window.location.origin}${window.location.pathname}?ref=${u.codigoConvite}</span></div><button id="copiarLinkBtn" class="btn-copiar"> Copiar link</button></div>`;
         return `${renderLive()}${renderCotacoes()}${conviteHtml}<div class="card saldo-area"><div><strong> Meu Saldo</strong><div class="saldo-valor">R$ ${u.saldo.toFixed(2)}</div><div class="vip-badge">VIP ${u.vipLevel} • Multiplicador ×${mult.toFixed(1)}</div><div>Limite hoje: ${u.avaliacoesHoje}/${limite}</div><div>Próximo nível: ${u.vipLevel<10?`R$ ${[40,80,130,190,260,340,430,530,640][u.vipLevel-1]-(u.totalDepositadoAprovado||0)}`:"Máximo"}</div><div> Indicados: ${u.totalIndicados||0}</div></div><div style="display:flex; gap:12px;"><button id="btnSaque" style="background:#0f172a;"> Sacar</button><button id="btnDeposito" style="background:#2b9348;"> Depositar</button></div></div><div class="card"><h2> Produtos para avaliar</h2><div class="produtos-grid" id="produtosGrid">${prodHtml}</div></div>${depositosHtml}<div class="card"><h2> Extrato de Saques</h2>${extrato}</div>`;
     }
@@ -663,7 +701,7 @@
     async function renderAdminPanel() {
         const snapshot = await usersRef.once('value');
         let users = [];
-        snapshot.forEach(child => { if(child.key !== ADMIN_EMAIL) users.push(child.val()); });
+        snapshot.forEach(child => { if(child.key !== sanitizeKey(ADMIN_EMAIL)) users.push(child.val()); });
         let activeTab="usuarios", searchTerm="";
         const renderContent = () => {
             let filtered = users.filter(u=>u.email!==ADMIN_EMAIL);
@@ -754,7 +792,7 @@
             document.getElementById('loginBtn').onclick = async () => { const id = document.getElementById('loginIdentifier').value, senha = document.getElementById('loginSenha').value; try { const res = await loginUser(id, senha); if(res.isAdmin) fullRender(); else { currentUser = res.user; fullRender(); } } catch(e) { document.getElementById('loginError').innerText = e.message; } };
             document.getElementById('goRegisterBtn').onclick = () => { currentView="register"; fullRender(); };
         } else {
-            document.getElementById('regSubmitBtn').onclick = async () => { try { const n=document.getElementById('regNome').value, sn=document.getElementById('regSobrenome').value, tel=document.getElementById('regTelefone').value, email=document.getElementById('regEmail').value, senha=document.getElementById('regSenha').value, cpf=document.getElementById('regCpf').value, cod=document.getElementById('regCodigoConvite').value; if(!n||!sn||!tel||!email||!senha) throw new Error("Preencha todos"); const res = await registerUser(n,sn,tel,email,senha,cpf,cod); if(res.bonusAplicado) alert(" Cadastro realizado! Você ganhou R$10 de bônus!"); else alert("Cadastro realizado! Faça login."); currentView="login"; fullRender(); } catch(e) { document.getElementById('regError').innerText = e.message; } };
+            document.getElementById('regSubmitBtn').onclick = async () => { try { const n=document.getElementById('regNome').value, sn=document.getElementById('regSobrenome').value, tel=document.getElementById('regTelefone').value, email=document.getElementById('regEmail').value, senha=document.getElementById('regSenha').value, cpf=document.getElementById('regCpf').value, cod=document.getElementById('regCodigoConvite').value; if(!n||!sn||!tel||!email||!senha||!cpf) throw new Error("Preencha todos os campos obrigatórios"); const res = await registerUser(n,sn,tel,email,senha,cpf,cod); if(res.bonusAplicado) alert(" Cadastro realizado! Você ganhou R$10 de bônus!"); else alert("Cadastro realizado! Faça login."); currentView="login"; fullRender(); } catch(e) { document.getElementById('regError').innerText = e.message; } };
             document.getElementById('backLoginBtn').onclick = () => { currentView="login"; fullRender(); };
         }
     }
