@@ -1,0 +1,648 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+    <title>ShopMall - Ganhe avaliando produtos</title>
+    <!-- Firebase SDKs -->
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Segoe UI', system-ui, -apple-system, BlinkMacSystemFont, 'Roboto', sans-serif;
+        }
+        body {
+            background-color: #f5f5f5;
+            padding-bottom: 30px;
+        }
+        :root {
+            --primary: #ee4d2d;
+            --primary-dark: #d73211;
+            --secondary: #ffc107;
+            --text-dark: #222;
+            --text-light: #666;
+            --border: #e0e0e0;
+            --bg-card: white;
+        }
+        .app-header {
+            background: var(--primary);
+            color: white;
+            padding: 12px 20px;
+            position: sticky;
+            top: 0;
+            z-index: 1000;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        .logo {
+            font-size: 1.5rem;
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .logo span { font-size: 1.8rem; }
+        .hamburger {
+            font-size: 28px;
+            cursor: pointer;
+            background: none;
+            border: none;
+            color: white;
+            width: 40px;
+            height: 40px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 50%;
+        }
+        .hamburger:hover { background: rgba(255,255,255,0.2); }
+        .side-drawer {
+            position: fixed;
+            top: 0;
+            right: -320px;
+            width: 280px;
+            height: 100%;
+            background: white;
+            box-shadow: -4px 0 20px rgba(0,0,0,0.2);
+            z-index: 1100;
+            transition: 0.3s;
+            padding: 70px 20px 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+        .side-drawer.open { right: 0; }
+        .drawer-option {
+            padding: 12px 16px;
+            background: #f8f8f8;
+            border-radius: 12px;
+            font-weight: 500;
+            cursor: pointer;
+            text-align: center;
+            color: #333;
+            transition: 0.2s;
+        }
+        .drawer-option:hover { background: var(--primary); color: white; }
+        .overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.5);
+            z-index: 1050;
+            display: none;
+        }
+        .overlay.active { display: block; }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .card {
+            background: var(--bg-card);
+            border-radius: 20px;
+            box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+            padding: 20px;
+            margin-bottom: 24px;
+            border: 1px solid var(--border);
+        }
+        /* Live saques */
+        .live-saques {
+            background: linear-gradient(135deg, #fff5f0, #ffe8e0);
+            border-left: 4px solid var(--primary);
+            border-radius: 16px;
+            padding: 12px 16px;
+            margin-bottom: 20px;
+            overflow: hidden;
+        }
+        .live-title {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-weight: bold;
+            color: var(--primary);
+            margin-bottom: 10px;
+            font-size: 0.9rem;
+        }
+        .live-title .pulse {
+            width: 10px;
+            height: 10px;
+            background-color: #22c55e;
+            border-radius: 50%;
+            animation: pulse 1.5s infinite;
+        }
+        @keyframes pulse {
+            0% { opacity: 0.4; transform: scale(0.8); }
+            100% { opacity: 1; transform: scale(1.2); }
+        }
+        .live-list-container {
+            height: 200px;
+            overflow: hidden;
+            position: relative;
+        }
+        .live-list {
+            display: flex;
+            flex-direction: column;
+            animation: scrollUp 25s linear infinite;
+        }
+        .live-list:hover { animation-play-state: paused; }
+        @keyframes scrollUp {
+            0% { transform: translateY(100%); }
+            100% { transform: translateY(-100%); }
+        }
+        .live-item {
+            background: white;
+            border-radius: 12px;
+            padding: 10px 12px;
+            margin-bottom: 8px;
+            font-size: 0.85rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+            flex-shrink: 0;
+        }
+        .live-user { font-weight: 600; color: var(--text-dark); }
+        .live-value { color: var(--primary); font-weight: bold; }
+        .live-vip { background: var(--secondary); padding: 2px 8px; border-radius: 20px; font-size: 0.7rem; font-weight: bold; }
+        .live-id { color: #888; font-size: 0.7rem; }
+        /* Cotação */
+        .cotacao-container {
+            display: flex;
+            gap: 16px;
+            flex-wrap: wrap;
+            justify-content: space-between;
+            background: #f0f7ff;
+            border-radius: 16px;
+            padding: 12px 16px;
+            margin-bottom: 20px;
+        }
+        .cotacao-item {
+            flex: 1;
+            text-align: center;
+            background: white;
+            border-radius: 12px;
+            padding: 8px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        .cotacao-nome { font-weight: bold; font-size: 0.9rem; }
+        .cotacao-valor { font-size: 1.1rem; color: var(--primary); font-weight: bold; }
+        .cotacao-variacao { font-size: 0.7rem; }
+        .positivo { color: #16a34a; }
+        .negativo { color: #dc2626; }
+        /* Convite */
+        .convite-box {
+            background: linear-gradient(135deg, #e8f5e9, #c8e6c9);
+            border-radius: 16px;
+            padding: 12px 16px;
+            margin-bottom: 16px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+        .convite-codigo {
+            font-family: monospace;
+            font-size: 1.2rem;
+            font-weight: bold;
+            background: white;
+            padding: 6px 12px;
+            border-radius: 30px;
+            color: var(--primary);
+        }
+        .btn-copiar {
+            background: #2e7d32;
+            padding: 6px 12px;
+            width: auto;
+            margin: 0;
+        }
+        .motivacional {
+            background: linear-gradient(135deg, #fff3e0, #ffe0b2);
+            border-radius: 16px;
+            padding: 16px;
+            text-align: center;
+            margin-bottom: 20px;
+            border-left: 5px solid var(--primary);
+        }
+        .auth-container {
+            max-width: 480px;
+            margin: 40px auto;
+        }
+        .form-group { margin-bottom: 18px; }
+        label { display: block; font-weight: 500; margin-bottom: 6px; color: var(--text-dark); }
+        input, button {
+            width: 100%;
+            padding: 12px 16px;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            font-size: 1rem;
+            outline: none;
+            transition: 0.2s;
+        }
+        input:focus {
+            border-color: var(--primary);
+            box-shadow: 0 0 0 2px rgba(238,77,45,0.2);
+        }
+        button {
+            background: var(--primary);
+            color: white;
+            font-weight: bold;
+            border: none;
+            cursor: pointer;
+        }
+        button.secondary { background: #6c757d; }
+        .flex-btns { display: flex; gap: 12px; margin-top: 10px; }
+        .saldo-area {
+            background: linear-gradient(135deg, #fff9e6, #fff0d4);
+            border-left: 5px solid var(--primary);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 15px;
+        }
+        .saldo-valor { font-size: 2rem; font-weight: 800; color: var(--primary); }
+        .vip-badge { background: var(--secondary); color: #7c2d12; padding: 4px 12px; border-radius: 30px; font-weight: bold; font-size: 0.8rem; display: inline-block; }
+        .produtos-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+            gap: 16px;
+            margin-top: 20px;
+        }
+        .produto-card {
+            background: white;
+            border-radius: 16px;
+            padding: 12px;
+            text-align: center;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+            transition: transform 0.2s;
+            border: 1px solid var(--border);
+        }
+        .produto-card:hover { transform: translateY(-4px); box-shadow: 0 8px 20px rgba(0,0,0,0.1); }
+        .produto-card img { width: 100px; height: 100px; object-fit: cover; border-radius: 12px; margin-bottom: 8px; background: #f0f0f0; }
+        .produto-nome { font-weight: 600; font-size: 0.85rem; margin: 8px 0; color: var(--text-dark); }
+        .produto-preco { font-size: 0.75rem; color: var(--text-light); }
+        .btn-avaliar { background: var(--primary); margin-top: 10px; padding: 8px; font-size: 0.8rem; }
+        .btn-avaliar:disabled { background: #ccc; cursor: not-allowed; }
+        table { width: 100%; border-collapse: collapse; overflow-x: auto; display: block; }
+        th, td { padding: 10px 8px; text-align: left; border-bottom: 1px solid var(--border); }
+        th { background: #fafafa; font-weight: 600; }
+        .status-sacando { color: #f97316; background: #fff3e0; padding: 4px 8px; border-radius: 20px; display: inline-block; }
+        .status-sucesso { color: #16a34a; background: #e0f2e9; padding: 4px 8px; border-radius: 20px; display: inline-block; }
+        .status-recusado { color: #dc2626; background: #fee2e2; padding: 4px 8px; border-radius: 20px; display: inline-block; }
+        .btn-imprimir { background: #0f172a; padding: 4px 10px; font-size: 0.7rem; border-radius: 20px; }
+        .modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.6);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1200;
+        }
+        .modal-card {
+            background: white;
+            max-width: 500px;
+            width: 90%;
+            border-radius: 24px;
+            padding: 24px;
+        }
+        .qr-code { text-align: center; margin: 20px 0; }
+        .admin-tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+        .tab-btn { background: #e2e8f0; color: #1e293b; width: auto; padding: 8px 20px; }
+        .tab-btn.active { background: var(--primary); color: white; }
+        .spinner { text-align: center; padding: 20px; color: var(--primary); }
+        @media (max-width: 640px) {
+            .produtos-grid { grid-template-columns: repeat(2,1fr); }
+            .saldo-area { flex-direction: column; align-items: stretch; }
+            .cotacao-container { flex-direction: column; }
+        }
+    </style>
+</head>
+<body>
+<div class="app-header">
+    <div class="logo"><span></span> ShopMall</div>
+    <button class="hamburger" id="hamburgerBtn"></button>
+</div>
+<div class="overlay" id="drawerOverlay"></div>
+<div class="side-drawer" id="sideDrawer">
+    <div class="drawer-option" data-option="perfil"> Meu Perfil</div>
+    <div class="drawer-option" data-option="statusSaque"> Status de Saque</div>
+    <div class="drawer-option" data-option="convite"> Meu Código de Convite</div>
+    <div class="drawer-option" data-option="suporte"> Chat Suporte</div>
+</div>
+<div class="container" id="app"><div class="spinner"> Carregando dados da nuvem...</div></div>
+<script>
+    // ---------- CONFIGURAÇÃO FIREBASE ----------
+    const firebaseConfig = {
+        apiKey: "AIzaSyCWAopv0PtTL9VrqnYyLlOqEVksrPSiGwE",
+        authDomain: "shop-mall-ce15d.firebaseapp.com",
+        projectId: "shop-mall-ce15d",
+        storageBucket: "shop-mall-ce15d.firebasestorage.app",
+        messagingSenderId: "320942334972",
+        appId: "1:320942334972:web:0807308db6ae1b51944879",
+        measurementId: "G-G65P6NCK32"
+    };
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.firestore();
+    const ADMIN_EMAIL = "admin";
+    const ADMIN_SENHA = "220808";
+    const CHAVE_PIX_FIXA = "weliton7458@gmail.com";
+    const STORAGE_SESSION = "shopmall_session";
+    function getLoggedUserEmail() { return sessionStorage.getItem(STORAGE_SESSION); }
+    function setLoggedUserEmail(email) { email ? sessionStorage.setItem(STORAGE_SESSION, email) : sessionStorage.removeItem(STORAGE_SESSION); }
+    async function findUserByEmail(email) { if (!email) return null; const doc = await db.collection('users').doc(email).get(); return doc.exists ? doc.data() : null; }
+    async function findUserByEmailOrPhone(identifier) {
+        const norm = identifier.trim().toLowerCase();
+        let user = await findUserByEmail(norm);
+        if (user) return user;
+        const snap = await db.collection('users').where('telefone', '==', identifier.trim()).get();
+        return snap.empty ? null : snap.docs[0].data();
+    }
+    async function updateUser(user) { await db.collection('users').doc(user.email).set(user, { merge: true }); return user; }
+    async function codigoJaUsado(codigo) { const snap = await db.collection('users').where('codigoUsado', '==', codigo).get(); return !snap.empty; }
+    function gerarCodigoConvite(email) {
+        const base = email.split('@')[0].toUpperCase().replace(/[^A-Z0-9]/g, '');
+        const random = Math.floor(Math.random() * 9000) + 1000;
+        return (base + random).slice(0, 10);
+    }
+    // VIP
+    function calcularNivelVIP(totalDep) { if (totalDep>=640) return 10; if (totalDep>=530) return 9; if (totalDep>=430) return 8; if (totalDep>=340) return 7; if (totalDep>=260) return 6; if (totalDep>=190) return 5; if (totalDep>=130) return 4; if (totalDep>=80) return 3; if (totalDep>=40) return 2; return 1; }
+    function getMultiplicadorVIP(vip) { return 1 + (vip-1)*0.5; }
+    function getGanhoPorAvaliacao(vip, valorBase) { let g = valorBase * getMultiplicadorVIP(vip); if (g>50) g=50; return parseFloat(g.toFixed(2)); }
+    function getLimiteDiario(vip) { const l = {1:10,2:8,3:9,4:9,5:8,6:7,7:6,8:5,9:4,10:3}; return l[vip]||3; }
+    async function atualizarVIPporDepositosAprovados(user) { const novo = calcularNivelVIP(user.totalDepositadoAprovado||0); if (novo !== user.vipLevel) { user.vipLevel = novo; await updateUser(user); } return user; }
+    async function resetDailyIfNeeded(user) {
+        const today = new Date().toISOString().slice(0,10);
+        if (user.ultimaDataAvaliacao !== today) {
+            user.avaliacoesHoje = 0;
+            user.produtosAvaliadosHoje = {};
+            user.ultimaDataAvaliacao = today;
+            await updateUser(user);
+        }
+        return user;
+    }
+    function validarSenha(s) { return /^\d{6}$/.test(s); }
+    function validarCPF(c) { if (!c) return true; return c.replace(/\D/g,'').length === 11; }
+    async function registerUser(nome, sobrenome, telefone, email, senha, cpf = "", codigoConvite = "") {
+        const normEmail = email.trim().toLowerCase();
+        if (await findUserByEmail(normEmail)) throw new Error("E-mail já existe");
+        if (!telefone.trim()) throw new Error("Telefone obrigatório");
+        const phoneSnap = await db.collection('users').where('telefone', '==', telefone.trim()).get();
+        if (!phoneSnap.empty) throw new Error("Telefone já cadastrado");
+        if (!validarSenha(senha)) throw new Error("Senha deve ter 6 dígitos numéricos");
+        if (cpf && !validarCPF(cpf)) throw new Error("CPF deve ter 11 dígitos");
+        const codigo = gerarCodigoConvite(normEmail);
+        const novo = {
+            nome, sobrenome, nomeCompleto: `${nome} ${sobrenome}`, telefone: telefone.trim(), cpf: cpf||null,
+            chavePixCadastro: "", email: normEmail, senha, saldo: 0, vipLevel: 1, totalDepositadoAprovado: 0,
+            historicoDepositos: [], avaliacoesHoje: 0, produtosAvaliadosHoje: {},
+            ultimaDataAvaliacao: new Date().toISOString().slice(0,10), historicoSaques: [],
+            codigoConvite: codigo, codigoUsado: null, totalIndicados: 0
+        };
+        let bonusAplicado = false;
+        if (codigoConvite && codigoConvite.trim()) {
+            const snap = await db.collection('users').where('codigoConvite', '==', codigoConvite.trim()).get();
+            if (!snap.empty && !(await codigoJaUsado(codigoConvite.trim()))) {
+                const indicador = snap.docs[0].data();
+                bonusAplicado = true;
+                novo.saldo += 10;
+                novo.codigoUsado = codigoConvite.trim();
+                indicador.saldo += 5;
+                indicador.totalIndicados = (indicador.totalIndicados||0)+1;
+                await updateUser(indicador);
+            }
+        }
+        await db.collection('users').doc(normEmail).set(novo);
+        return { user: novo, bonusAplicado };
+    }
+    async function loginUser(identifier, senha) {
+        if (identifier.trim().toLowerCase() === ADMIN_EMAIL && senha === ADMIN_SENHA) {
+            sessionStorage.setItem("admin_logged", "true");
+            setLoggedUserEmail(null);
+            return { isAdmin: true };
+        }
+        const user = await findUserByEmailOrPhone(identifier);
+        if (!user || user.senha !== senha) throw new Error("Credenciais inválidas");
+        setLoggedUserEmail(user.email);
+        sessionStorage.removeItem("admin_logged");
+        return { isAdmin: false, user: await resetDailyIfNeeded(user) };
+    }
+    function isAdminLogged() { return sessionStorage.getItem("admin_logged") === "true"; }
+    function adminLogout() { sessionStorage.removeItem("admin_logged"); }
+    // Produtos
+    function obterImagemPorNome(nome) {
+        const map = { "Camiseta":"t-shirt", "Fone Bluetooth":"headphone", "Power Bank":"power-bank", "Relógio":"watch", "Mochila":"backpack", "Mouse":"mouse", "Teclado":"keyboard", "Capa Celular":"phone-case", "Película":"screen-protector", "Garrafa":"water-bottle" };
+        let palavra = "product";
+        for (let [k,v] of Object.entries(map)) if (nome.includes(k)) { palavra=v; break; }
+        return `https://source.unsplash.com/featured/100x100?${palavra}&random=${Math.random()}`;
+    }
+    function gerarProdutos() {
+        const bases = ["Camiseta","Fone Bluetooth","Power Bank","Relógio","Mochila","Mouse","Teclado","Capa Celular","Película","Garrafa"];
+        return Array.from({length:10}, (_,i) => ({
+            id: i+1, nome: `${bases[i%bases.length]} #${i+1}`,
+            imagem: obterImagemPorNome(bases[i%bases.length]),
+            valorBase: parseFloat((Math.random() * (10-0.30) + 0.30).toFixed(2))
+        }));
+    }
+    let produtosAtuais = gerarProdutos();
+    async function avaliarProduto(user, produtoId, valorBase) {
+        let u = await resetDailyIfNeeded(user);
+        const limite = getLimiteDiario(u.vipLevel);
+        if (u.avaliacoesHoje >= limite) throw new Error(`Limite diário de ${limite} avaliações (VIP${u.vipLevel})`);
+        if (u.produtosAvaliadosHoje[produtoId]) throw new Error("Produto já avaliado hoje");
+        const ganho = getGanhoPorAvaliacao(u.vipLevel, valorBase);
+        u.avaliacoesHoje++;
+        u.produtosAvaliadosHoje[produtoId] = true;
+        u.saldo += ganho;
+        await updateUser(u);
+        return u;
+    }
+    async function solicitarSaque(user, valor, chavePix) {
+        if (valor < 30) throw new Error("Valor mínimo R$30");
+        if (valor > user.saldo) throw new Error("Saldo insuficiente");
+        const agora = new Date();
+        const registro = {
+            nome: user.nomeCompleto, data: agora.toLocaleDateString('pt-BR'), hora: agora.toLocaleTimeString('pt-BR'),
+            valor, chaveUsada: chavePix, codigoRegistro: `SAC${Date.now()}${Math.floor(Math.random()*1000)}`,
+            numAutenticacao: Math.floor(100000+Math.random()*900000).toString(), status: "Sacando"
+        };
+        user.saldo -= valor;
+        user.historicoSaques.unshift(registro);
+        await updateUser(user);
+        return user;
+    }
+    async function autorizarSaque(userEmail, index) { const u = await findUserByEmail(userEmail); if (u && u.historicoSaques[index]?.status==="Sacando") { u.historicoSaques[index].status="Sucesso"; await updateUser(u); } }
+    async function recusarSaque(userEmail, index) { const u = await findUserByEmail(userEmail); const s = u?.historicoSaques[index]; if (s?.status==="Sacando") { u.saldo += s.valor; s.status="Recusado"; await updateUser(u); } }
+    async function solicitarDeposito(user, valor) { if (valor<=0) throw new Error("Valor inválido"); user.historicoDepositos.unshift({ valor, data: new Date().toLocaleDateString('pt-BR'), hora: new Date().toLocaleTimeString('pt-BR'), metodo:"Pix", status:"pendente" }); await updateUser(user); return user; }
+    async function aprovarDeposito(userEmail, idx) { const u = await findUserByEmail(userEmail); const d = u?.historicoDepositos[idx]; if (d?.status==="pendente") { d.status="aprovado"; u.saldo += d.valor; u.totalDepositadoAprovado = (u.totalDepositadoAprovado||0)+d.valor; await updateUser(u); await atualizarVIPporDepositosAprovados(u); } }
+    async function rejeitarDeposito(userEmail, idx) { const u = await findUserByEmail(userEmail); const d = u?.historicoDepositos[idx]; if (d?.status==="pendente") { d.status="rejeitado"; await updateUser(u); } }
+    function imprimirComprovante(s) { const html = `<!DOCTYPE html><html><head><title>Comprovante</title><style>body{font-family:Arial;padding:40px}.container{max-width:600px;margin:0 auto;border:1px solid #ccc;padding:20px;border-radius:16px}h2{color:#ee4d2d}</style></head><body><div class='container'><h2> ShopMall - Comprovante de Saque</h2><p><strong>Nome:</strong> ${s.nome}</p><p><strong>Data:</strong> ${s.data} ${s.hora}</p><p><strong>Valor:</strong> R$ ${s.valor.toFixed(2)}</p><p><strong>Código:</strong> ${s.codigoRegistro}</p><p><strong>Autenticação:</strong> ${s.numAutenticacao}</p><p><strong>Chave Pix:</strong> ${s.chaveUsada}</p><p><strong>Status:</strong> ${s.status}</p></div></body></html>`; const w=window.open(); w.document.write(html); w.document.close(); w.print(); }
+    // Simulação de cotações
+    let cotacoes = { "Dólar (USD)": 5.23, "Bitcoin (BTC)": 320000, "Euro (EUR)": 5.68, "Ethereum (ETH)": 11000, "IPCA (Mensal)": 0.42 };
+    let cotacoesInterval = null;
+    function atualizarCotacoes() {
+        for (let k in cotacoes) {
+            let variacao = (Math.random() - 0.5) * 0.04; // -2% a +2%
+            if (k.includes("Bitcoin") || k.includes("Ethereum")) variacao = (Math.random() - 0.5) * 0.06;
+            let novo = cotacoes[k] * (1 + variacao);
+            if (novo < 0) novo = 0.01;
+            cotacoes[k] = parseFloat(novo.toFixed(k.includes("Bitcoin")||k.includes("Ethereum")?0:2));
+        }
+        const container = document.getElementById("cotacoesContainer");
+        if (container) {
+            container.innerHTML = Object.entries(cotacoes).map(([nome,valor]) => {
+                let variacao = ((Math.random() - 0.5)*2).toFixed(2);
+                let sinal = parseFloat(variacao)>=0 ? "positivo" : "negativo";
+                let sinalStr = parseFloat(variacao)>=0 ? `+${variacao}%` : `${variacao}%`;
+                return `<div class="cotacao-item"><div class="cotacao-nome">${nome}</div><div class="cotacao-valor">${nome.includes("Bitcoin")||nome.includes("Ethereum") ? `R$ ${valor.toLocaleString()}` : `R$ ${valor.toFixed(2)}`}</div><div class="cotacao-variacao ${sinal}">${sinalStr}</div></div>`;
+            }).join('');
+        }
+    }
+    function iniciarSimulacaoCotacoes() { if (cotacoesInterval) clearInterval(cotacoesInterval); atualizarCotacoes(); cotacoesInterval = setInterval(atualizarCotacoes, 5000); }
+    function pararSimulacaoCotacoes() { if (cotacoesInterval) { clearInterval(cotacoesInterval); cotacoesInterval = null; } }
+    // Simulação saques ao vivo
+    const nomesFict = ["Ana Silva","Carlos Oliveira","Mariana Souza","João Pereira","Fernanda Lima","Rafael Alves","Beatriz Costa","Lucas Rodrigues","Juliana Santos","Thiago Martins","Camila Rocha","Diego Nunes","Patrícia Gomes","Bruno Teixeira","Larissa Mendes"];
+    let liveInterval = null, liveNotif = [];
+    function gerarNotif() { return { nome: nomesFict[Math.floor(Math.random()*nomesFict.length)], valor: parseFloat((Math.random()*470+30).toFixed(2)), vip: Math.floor(Math.random()*10)+1, id: Math.floor(Math.random()*90000)+10000 }; }
+    function addNotif() { liveNotif.unshift(gerarNotif()); if (liveNotif.length>12) liveNotif.pop(); atualizarLive(); }
+    function atualizarLive() { const c = document.getElementById('liveSaquesList'); if (!c) return; if (liveNotif.length===0) { c.innerHTML='<div style="text-align:center;color:#888;padding:10px">Aguardando saques...</div>'; return; } c.innerHTML = liveNotif.map(n=>`<div class="live-item"><div><span class="live-user">${n.nome}</span> <span class="live-id">(ID: ${n.id})</span></div><div><span class="live-value">R$ ${n.valor.toFixed(2)}</span> <span class="live-vip">VIP ${n.vip}</span></div></div>`).join('') + liveNotif.map(n=>`<div class="live-item"><div><span class="live-user">${n.nome}</span> <span class="live-id">(ID: ${n.id})</span></div><div><span class="live-value">R$ ${n.valor.toFixed(2)}</span> <span class="live-vip">VIP ${n.vip}</span></div></div>`).join(''); }
+    function iniciarLive() { if (liveInterval) clearInterval(liveInterval); liveNotif=[]; for(let i=0;i<8;i++) addNotif(); liveInterval = setInterval(addNotif, 3500); }
+    function pararLive() { if (liveInterval) { clearInterval(liveInterval); liveInterval=null; } }
+    function renderLive() { return `<div class="live-saques"><div class="live-title"><span class="pulse"></span>  SAQUES AO VIVO AGORA</div><div class="live-list-container"><div id="liveSaquesList" class="live-list"></div></div></div>`; }
+    function renderCotacoes() { return `<div class="cotacao-container" id="cotacoesContainer"></div>`; }
+    // UI
+    let currentUser=null, isAdmin=false, currentView="login", drawerOpen=false;
+    const app = document.getElementById("app"), drawer = document.getElementById("sideDrawer"), overlay = document.getElementById("drawerOverlay"), hamburger = document.getElementById("hamburgerBtn");
+    function closeDrawer() { drawer.classList.remove("open"); overlay.classList.remove("active"); drawerOpen=false; }
+    function openDrawer() { drawer.classList.add("open"); overlay.classList.add("active"); drawerOpen=true; }
+    hamburger.onclick = () => drawerOpen ? closeDrawer() : openDrawer();
+    overlay.onclick = closeDrawer;
+    function renderLogin() { return `<div class="auth-container"><div class="card"><h1 style="text-align:center"> ShopMall</h1><div class="motivacional"><h3> Ganhe dinheiro avaliando produtos! </h3><p> Até R$50 por avaliação! <br> Indique amigos e ganhe R$5 por indicação!<br> Seja VIP e multiplique seus ganhos!<br> Saques a partir de R$30! </p></div><h2>Login</h2><div class="form-group"><label>E-mail ou Telefone</label><input id="loginIdentifier" placeholder="exemplo@email.com ou (11)99999-9999"></div><div class="form-group"><label>Senha (6 dígitos)</label><input type="password" id="loginSenha" maxlength="6"></div><button id="loginBtn">Entrar</button><div class="flex-btns"><button id="goRegisterBtn" class="secondary">Criar conta</button></div><div id="loginError" style="color:red;margin-top:10px"></div></div></div>`; }
+    function renderRegister() { const ref = new URLSearchParams(window.location.search).get('ref')||''; return `<div class="auth-container"><div class="card"><h2> Criar conta</h2><div class="form-group"><label>Nome</label><input id="regNome"></div><div class="form-group"><label>Sobrenome</label><input id="regSobrenome"></div><div class="form-group"><label>Telefone (obrigatório)</label><input id="regTelefone" placeholder="(11) 99999-9999"></div><div class="form-group"><label>E-mail</label><input id="regEmail"></div><div class="form-group"><label>Senha (6 dígitos numéricos)</label><input type="password" id="regSenha" maxlength="6"></div><div class="form-group"><label>CPF (opcional, 11 dígitos)</label><input id="regCpf" placeholder="Somente números"></div><div class="form-group"><label>Código de convite (opcional)</label><input id="regCodigoConvite" value="${ref}"></div><button id="regSubmitBtn">Cadastrar e ganhar R$10 de bônus!</button><button id="backLoginBtn" class="secondary">Voltar</button><div id="regError" style="color:red"></div></div></div>`; }
+    function renderDashboard() {
+        if(!currentUser) return "";
+        const u = currentUser, limite = getLimiteDiario(u.vipLevel), pode = u.avaliacoesHoje < limite, mult = getMultiplicadorVIP(u.vipLevel);
+        let prodHtml = "";
+        produtosAtuais.forEach(p => { const av = u.produtosAvaliadosHoje[p.id]; const ganho = getGanhoPorAvaliacao(u.vipLevel, p.valorBase); prodHtml += `<div class="produto-card"><img src="${p.imagem}" onerror="this.src='https://via.placeholder.com/100x100?text=Produto'"><div class="produto-nome">${p.nome}</div><div class="produto-preco">Base: R$ ${p.valorBase.toFixed(2)}</div><button class="btn-avaliar" data-id="${p.id}" data-base="${p.valorBase}" ${!pode || av ? 'disabled' : ''}>${av ? ' Avaliado' : ` Ganhe R$ ${ganho.toFixed(2)}`}</button></div>`; });
+        let extrato = `<table><thead><tr><th>Nome</th><th>Data/Hora</th><th>Valor</th><th>Código</th><th>Status</th><th>Ação</th></tr></thead><tbody>`;
+        u.historicoSaques.forEach((s,idx) => { let cls = s.status==="Sucesso"?"status-sucesso":(s.status==="Recusado"?"status-recusado":"status-sacando"); let btn = s.status==="Sucesso"?`<button class="btn-imprimir" data-idx="${idx}"> Imprimir</button>`:""; extrato += `<tr><td>${s.nome}</td><td>${s.data} ${s.hora}</td><td>R$ ${s.valor.toFixed(2)}</td><td>${s.codigoRegistro}</td><td><span class="${cls}">${s.status}</span></td><td>${btn}</td></tr>`; });
+        if(u.historicoSaques.length===0) extrato += `<tr><td colspan="6">Nenhum saque</td></tr>`;
+        extrato += `</tbody></table>`;
+        let depositosHtml = `<div class="card"><h3> Histórico de Depósitos</h3>${u.historicoDepositos.length===0?'<p>Nenhum depósito</p>':`<table><thead><tr><th>Valor</th><th>Data</th><th>Status</th></tr></thead><tbody>${u.historicoDepositos.map(d=>`<tr><td>R$ ${d.valor.toFixed(2)}</td><td>${d.data} ${d.hora}</td><td>${d.status==="pendente"?" Pendente (aprov. admin)":(d.status==="aprovado"?" Aprovado":" Rejeitado")}</td></tr>`).join('')}</tbody></table>`}</div>`;
+        const conviteHtml = `<div class="convite-box"><div><strong> Seu código:</strong> <span class="convite-codigo" id="meuCodigoConvite">${u.codigoConvite}</span></div><button id="copiarCodigoBtn" class="btn-copiar"> Copiar</button></div><div class="convite-box" style="background:#e3f2fd;"><div><strong> Link de convite:</strong> <span id="linkConvite" style="font-size:0.8rem; word-break:break-all;">${window.location.origin}${window.location.pathname}?ref=${u.codigoConvite}</span></div><button id="copiarLinkBtn" class="btn-copiar"> Copiar link</button></div>`;
+        return `${renderLive()}${renderCotacoes()}${conviteHtml}<div class="card saldo-area"><div><strong> Meu Saldo</strong><div class="saldo-valor">R$ ${u.saldo.toFixed(2)}</div><div class="vip-badge">VIP ${u.vipLevel} • Multiplicador ×${mult.toFixed(1)}</div><div>Limite hoje: ${u.avaliacoesHoje}/${limite}</div><div>Próximo nível: ${u.vipLevel<10?`R$ ${[40,80,130,190,260,340,430,530,640][u.vipLevel-1]-(u.totalDepositadoAprovado||0)}`:"Máximo"}</div><div> Indicados: ${u.totalIndicados||0}</div></div><div style="display:flex; gap:12px;"><button id="btnSaque" style="background:#0f172a;"> Sacar</button><button id="btnDeposito" style="background:#2b9348;"> Depositar</button></div></div><div class="card"><h2> Produtos para avaliar</h2><div class="produtos-grid" id="produtosGrid">${prodHtml}</div></div>${depositosHtml}<div class="card"><h2> Extrato de Saques</h2>${extrato}</div>`;
+    }
+    async function renderAdminPanel() {
+        const snap = await db.collection('users').get();
+        let users = []; snap.forEach(d=>{ if(d.id!==ADMIN_EMAIL) users.push(d.data()); });
+        let activeTab="usuarios", searchTerm="";
+        const renderContent = () => {
+            let filtered = users.filter(u=>u.email!==ADMIN_EMAIL);
+            if(searchTerm) filtered = filtered.filter(u=>u.email.includes(searchTerm)||u.nomeCompleto.includes(searchTerm));
+            if(activeTab==="usuarios") {
+                let html = `<table><thead><tr><th>Email</th><th>Nome</th><th>Saldo</th><th>VIP</th><th>Indicados</th><th>Ações</th></tr></thead><tbody>`;
+                filtered.forEach(u=>{ html += `<tr><td>${u.email}</td><td>${u.nomeCompleto}</td><td>R$ ${u.saldo.toFixed(2)}</td><td>VIP${u.vipLevel}</td><td>${u.totalIndicados||0}</td><td><button class="addSaldo" data-email="${u.email}">+Saldo</button> <button class="resetSenha" data-email="${u.email}">Reset Senha</button> <button class="verDetalhes" data-email="${u.email}">Detalhes</button></td></tr>`; });
+                html += `</tbody></table>`;
+                document.getElementById("adminContent").innerHTML = html;
+                document.querySelectorAll(".addSaldo").forEach(btn=>btn.onclick=async()=>{ let email=btn.dataset.email, val=prompt("Valor:"); if(val && !isNaN(val)){ let u=await findUserByEmail(email); if(u){ u.saldo+=parseFloat(val); await updateUser(u); renderAdminPanel(); } } });
+                document.querySelectorAll(".resetSenha").forEach(btn=>btn.onclick=async()=>{ let email=btn.dataset.email, nova=prompt("Nova senha (6 dígitos):"); if(nova && validarSenha(nova)){ let u=await findUserByEmail(email); if(u){ u.senha=nova; await updateUser(u); alert("Senha alterada"); renderAdminPanel(); } } else alert("6 dígitos") });
+                document.querySelectorAll(".verDetalhes").forEach(btn=>btn.onclick=async()=>{ let u=await findUserByEmail(btn.dataset.email); alert(`Depósitos: ${u.historicoDepositos.length}\nSaques: ${u.historicoSaques.length}\nTotal depositado: R$ ${(u.totalDepositadoAprovado||0).toFixed(2)}\nIndicados: ${u.totalIndicados||0}`); });
+            } else if(activeTab==="saques") {
+                let pend=[];
+                for(let u of users) u.historicoSaques.forEach((s,idx)=>{ if(s.status==="Sacando") pend.push({email:u.email, nome:u.nomeCompleto, idx, saque:s}); });
+                let html = `<table><thead><tr><th>Usuário</th><th>Valor</th><th>Data</th><th>Ações</th></tr></thead><tbody>`;
+                if(pend.length===0) html += `<tr><td colspan="4">Nenhum saque pendente</td></tr>`;
+                pend.forEach(p=>{ html += `<tr><td>${p.nome}</td><td>R$ ${p.saque.valor.toFixed(2)}</td><td>${p.saque.data} ${p.saque.hora}</td><td><button class="autorizarSaque" data-email="${p.email}" data-idx="${p.idx}" style="background:#16a34a;"> Autorizar</button> <button class="recusarSaque" data-email="${p.email}" data-idx="${p.idx}" style="background:#dc2626;"> Recusar</button></td></tr>`; });
+                html += `</tbody></table>`;
+                document.getElementById("adminContent").innerHTML = html;
+                document.querySelectorAll(".autorizarSaque").forEach(btn=>btn.onclick=async()=>{ await autorizarSaque(btn.dataset.email, parseInt(btn.dataset.idx)); renderAdminPanel(); });
+                document.querySelectorAll(".recusarSaque").forEach(btn=>btn.onclick=async()=>{ await recusarSaque(btn.dataset.email, parseInt(btn.dataset.idx)); renderAdminPanel(); });
+            } else if(activeTab==="depositos") {
+                let pend=[];
+                for(let u of users) u.historicoDepositos.forEach((d,idx)=>{ if(d.status==="pendente") pend.push({email:u.email, nome:u.nomeCompleto, idx, deposito:d}); });
+                let html = `<table><thead><tr><th>Usuário</th><th>Valor</th><th>Data</th><th>Ações</th></tr></thead><tbody>`;
+                if(pend.length===0) html += `<tr><td colspan="4">Nenhum depósito pendente</td></tr>`;
+                pend.forEach(p=>{ html += `<tr><td>${p.nome}</td><td>R$ ${p.deposito.valor.toFixed(2)}</td><td>${p.deposito.data} ${p.deposito.hora}</td><td><button class="aprovarDep" data-email="${p.email}" data-idx="${p.idx}" style="background:#16a34a;"> Aprovar</button> <button class="rejeitarDep" data-email="${p.email}" data-idx="${p.idx}" style="background:#dc2626;"> Rejeitar</button></td></tr>`; });
+                html += `</tbody></table>`;
+                document.getElementById("adminContent").innerHTML = html;
+                document.querySelectorAll(".aprovarDep").forEach(btn=>btn.onclick=async()=>{ await aprovarDeposito(btn.dataset.email, parseInt(btn.dataset.idx)); renderAdminPanel(); });
+                document.querySelectorAll(".rejeitarDep").forEach(btn=>btn.onclick=async()=>{ await rejeitarDeposito(btn.dataset.email, parseInt(btn.dataset.idx)); renderAdminPanel(); });
+            }
+        };
+        const container = document.createElement('div'); container.className='card';
+        container.innerHTML = `<h2> Painel Admin</h2><div class="admin-tabs"><button class="tab-btn" data-tab="usuarios">Usuários</button><button class="tab-btn" data-tab="saques">Saques Pendentes</button><button class="tab-btn" data-tab="depositos">Depósitos Pendentes</button><button id="adminLogout" class="secondary" style="background:#475569;">Sair</button></div><input type="text" id="adminSearch" placeholder="Buscar..."><div id="adminContent"></div>`;
+        app.innerHTML = ''; app.appendChild(container);
+        document.getElementById('adminSearch').oninput = e => { searchTerm = e.target.value; renderContent(); };
+        document.querySelectorAll('.tab-btn').forEach(btn=>btn.onclick = ()=>{ activeTab = btn.dataset.tab; renderContent(); });
+        document.getElementById('adminLogout').onclick = () => { adminLogout(); fullRender(); };
+        renderContent();
+    }
+    let activeModal=null;
+    function closeModal() { if(activeModal) activeModal.remove(); activeModal=null; }
+    function showSaqueModal() {
+        const m = document.createElement('div'); m.className='modal';
+        m.innerHTML = `<div class="modal-card"><h3> Solicitar Saque</h3><p>Saldo: R$ ${currentUser.saldo.toFixed(2)}</p><div class="form-group"><label>Valor (mínimo R$30)</label><input id="saqueValor" type="number" step="0.01"></div><div class="form-group"><label>Chave Pix</label><input id="saqueChave"></div><button id="confirmarSaque">Confirmar</button><button id="cancelModal" class="secondary">Cancelar</button><div id="modalError" style="color:red"></div></div>`;
+        document.body.appendChild(m); activeModal=m;
+        document.getElementById('confirmarSaque').onclick = async () => { const val = parseFloat(document.getElementById('saqueValor').value), chave = document.getElementById('saqueChave').value.trim(); try { if(isNaN(val)) throw new Error("Valor inválido"); currentUser = await solicitarSaque(currentUser, val, chave); closeModal(); fullRender(); } catch(e) { document.getElementById('modalError').innerText = e.message; } };
+        document.getElementById('cancelModal').onclick = closeModal;
+    }
+    function showDepositoModal() {
+        const m = document.createElement('div'); m.className='modal';
+        m.innerHTML = `<div class="modal-card"><h3> Depósito Pix</h3><div class="form-group"><label>Valor (R$)</label><input id="depValor" type="number" step="0.01"></div><div class="form-group"><label>Chave Pix (copie)</label><input id="depChave" value="${CHAVE_PIX_FIXA}" readonly></div><button id="gerarQr">Gerar QR Code</button><div id="qrArea" style="display:none" class="qr-code"></div><button id="solicitarDep" style="background:#2b6e3c;"> Já efetuei o Pix</button><button id="cancelDep" class="secondary">Fechar</button><div id="depError" style="color:red"></div></div>`;
+        document.body.appendChild(m); activeModal=m;
+        let valorAtual=0;
+        document.getElementById('gerarQr').onclick = () => { const val = parseFloat(document.getElementById('depValor').value); if(isNaN(val)||val<=0){ document.getElementById('depError').innerText="Valor inválido"; return; } valorAtual=val; const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=pix:${CHAVE_PIX_FIXA}?amount=${val}`; document.getElementById('qrArea').innerHTML = `<img src="${qrUrl}" width="160"><br><button id="copiarChave" style="background:#334155;"> Copiar chave</button>`; document.getElementById('qrArea').style.display='block'; document.getElementById('copiarChave')?.addEventListener('click',()=>{ navigator.clipboard.writeText(CHAVE_PIX_FIXA); alert("Chave copiada!"); }); };
+        document.getElementById('solicitarDep').onclick = async () => { if(valorAtual===0){ document.getElementById('depError').innerText="Gere o QR Code primeiro"; return; } try { currentUser = await solicitarDeposito(currentUser, valorAtual); alert(" Solicitação enviada! O depósito pode levar até 24 horas para ser compensado. Aguarde aprovação do administrador."); closeModal(); fullRender(); } catch(e){ document.getElementById('depError').innerText=e.message; } };
+        document.getElementById('cancelDep').onclick = closeModal;
+    }
+    function showPerfil() { alert(` ${currentUser.nomeCompleto}\n ${currentUser.email}\n ${currentUser.telefone}\n VIP ${currentUser.vipLevel}\n Saldo: R$ ${currentUser.saldo.toFixed(2)}\n Código: ${currentUser.codigoConvite}\n Indicados: ${currentUser.totalIndicados||0}`); }
+    function showStatusSaque() { let msg = "Status dos saques:\n"; currentUser.historicoSaques.forEach(s=>msg+=`${s.data} - R$ ${s.valor} - ${s.status}\n`); alert(msg||"Nenhum saque"); }
+    function showConvite() { const link = `${window.location.origin}${window.location.pathname}?ref=${currentUser.codigoConvite}`; alert(` Código: ${currentUser.codigoConvite}\nLink: ${link}\nCompartilhe e ganhe R$5 por amigo!`); navigator.clipboard.writeText(link); }
+    function showSuporte() { alert(" Suporte: (11) 99999-9999 | suporte@shopmall.com"); }
+    async function fullRender() {
+        if(isAdminLogged()) { pararLive(); pararSimulacaoCotacoes(); await renderAdminPanel(); return; }
+        const logged = getLoggedUserEmail();
+        if(logged) { const u = await findUserByEmail(logged); if(u) { currentUser = await resetDailyIfNeeded(u); app.innerHTML = renderDashboard(); attachDashboardEvents(); iniciarLive(); iniciarSimulacaoCotacoes(); return; } else setLoggedUserEmail(null); }
+        if(currentView==="register") { app.innerHTML = renderRegister(); attachAuthEvents(); pararLive(); pararSimulacaoCotacoes(); }
+        else { app.innerHTML = renderLogin(); attachAuthEvents(); pararLive(); pararSimulacaoCotacoes(); }
+        closeDrawer();
+    }
+    function attachDashboardEvents() {
+        document.querySelectorAll('.btn-avaliar').forEach(btn=>btn.onclick=async()=>{ const id=parseInt(btn.dataset.id), base=parseFloat(btn.dataset.base); try { currentUser = await avaliarProduto(currentUser, id, base); fullRender(); } catch(e){ alert(e.message); } });
+        document.getElementById('btnSaque')?.addEventListener('click', showSaqueModal);
+        document.getElementById('btnDeposito')?.addEventListener('click', showDepositoModal);
+        document.querySelectorAll('.btn-imprimir').forEach(btn=>btn.onclick=()=>{ const idx=parseInt(btn.dataset.idx), s=currentUser.historicoSaques[idx]; if(s?.status==="Sucesso") imprimirComprovante(s); else alert("Apenas saques aprovados"); });
+        document.getElementById('copiarCodigoBtn')?.addEventListener('click',()=>{ navigator.clipboard.writeText(currentUser.codigoConvite); alert("Código copiado!"); });
+        document.getElementById('copiarLinkBtn')?.addEventListener('click',()=>{ const link=`${window.location.origin}${window.location.pathname}?ref=${currentUser.codigoConvite}`; navigator.clipboard.writeText(link); alert("Link copiado!"); });
+        document.querySelectorAll('.drawer-option').forEach(opt=>opt.onclick=()=>{ const val=opt.dataset.option; closeDrawer(); if(val==='perfil') showPerfil(); else if(val==='statusSaque') showStatusSaque(); else if(val==='convite') showConvite(); else if(val==='suporte') showSuporte(); });
+    }
+    function attachAuthEvents() {
+        if(currentView==="login") {
+            document.getElementById('loginBtn').onclick = async () => { const id = document.getElementById('loginIdentifier').value, senha = document.getElementById('loginSenha').value; try { const res = await loginUser(id, senha); if(res.isAdmin) fullRender(); else { currentUser = res.user; fullRender(); } } catch(e) { document.getElementById('loginError').innerText = e.message; } };
+            document.getElementById('goRegisterBtn').onclick = () => { currentView="register"; fullRender(); };
+        } else {
+            document.getElementById('regSubmitBtn').onclick = async () => { try { const n=document.getElementById('regNome').value, sn=document.getElementById('regSobrenome').value, tel=document.getElementById('regTelefone').value, email=document.getElementById('regEmail').value, senha=document.getElementById('regSenha').value, cpf=document.getElementById('regCpf').value, cod=document.getElementById('regCodigoConvite').value; if(!n||!sn||!tel||!email||!senha) throw new Error("Preencha todos"); const res = await registerUser(n,sn,tel,email,senha,cpf,cod); if(res.bonusAplicado) alert(" Cadastro realizado! Você ganhou R$10 de bônus!"); else alert("Cadastro realizado! Faça login."); currentView="login"; fullRender(); } catch(e) { document.getElementById('regError').innerText = e.message; } };
+            document.getElementById('backLoginBtn').onclick = () => { currentView="login"; fullRender(); };
+        }
+    }
+    function init() { produtosAtuais = gerarProdutos(); fullRender(); }
+    init();
+</script>
+</body>
+</html>
